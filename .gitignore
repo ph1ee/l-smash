@@ -20,6 +20,7 @@ config.*
 boxdumper
 muxer
 remuxer
+mp4merge
 timelineeditor
 *.264
 *.3gp
