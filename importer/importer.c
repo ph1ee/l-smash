@@ -102,8 +102,10 @@ void lsmash_importer_destroy( importer_t *importer )
     if( importer->funcs.cleanup )
         importer->funcs.cleanup( importer );
     lsmash_remove_list( importer->summaries, lsmash_cleanup_summary );
-    if( importer->root && importer->root != importer->file->root )
+    if( importer->root && importer->root->file && importer->root != importer->file->root ) {
         importer->root->file = NULL;    /* not internally opened file */
+        importer->file->root = NULL;
+    }
     lsmash_destroy_root( importer->root );
     lsmash_free( importer );
 }

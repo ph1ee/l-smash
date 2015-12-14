@@ -136,6 +136,7 @@ typedef struct
     uint32_t          ctd_shift;
     uint32_t          priming_samples;
     uint32_t          last_delta;
+    uint32_t          end_dts;
     uint64_t          prev_dts;
     int64_t           start_offset;
     double            dts;
@@ -817,8 +818,8 @@ static int open_input_files( muxer_t *muxer )
                 display_codec_name( codec_type, out_movie->num_of_tracks + input->num_of_active_tracks );
             }
         }
-        out_movie->num_of_tracks += input->num_of_active_tracks;
     }
+    out_movie->num_of_tracks = 1; // video track only
     if( out_movie->num_of_tracks == 0 )
         return ERROR_MSG( "there is no media that can be stored in output movie.\n" );
     return 0;
@@ -894,7 +895,8 @@ static int prepare_output( muxer_t *muxer )
     {
         input_t *input = &muxer->input[current_input_number - 1];
         for( input->current_track_number = 1;
-             input->current_track_number <= input->num_of_tracks;
+             input->current_track_number <= input->num_of_tracks
+         && out_movie->current_track_number <= out_movie->num_of_tracks;
              input->current_track_number ++ )
         {
             input_track_t *in_track = &input->track[ input->current_track_number - 1 ];
@@ -1071,9 +1073,18 @@ static int do_mux( muxer_t *muxer )
     uint32_t num_active_input_tracks = out_movie->num_of_tracks;
     uint64_t total_media_size = 0;
     uint8_t  sample_count = 0;
-    while( 1 )
+    uint32_t current_track_number = 1;
+
+    for (; current_input_number <= muxer->num_of_inputs; current_input_number++)
     {
         input_t *input = &muxer->input[current_input_number - 1];
+
+        while (1) {
+
+        // TODO(sam.l): for all first video track
+        input->current_track_number = current_track_number;
+        out_movie->current_track_number = current_track_number;
+
         output_track_t *out_track = &out_movie->track[ out_movie->current_track_number - 1 ];
         if( out_track->active )
         {
@@ -1110,19 +1121,27 @@ static int do_mux( muxer_t *muxer )
                     /* No more appendable samples in this track. */
                     lsmash_delete_sample( sample );
                     sample = NULL;
-                    out_track->active = 0;
+                    // sam.l: Don't inactivate this out_track
+                    // out_track->active = 0;
                     out_track->last_delta = lsmash_importer_get_last_delta( input->importer, input->current_track_number );
                     if( out_track->last_delta == 0 )
                         ERROR_MSG( "failed to get the last sample delta.\n" );
                     out_track->last_delta *= out_track->timebase;
-                    if( --num_active_input_tracks == 0 )
-                        break;      /* Reached the end of whole tracks. */
+                    // sam.l: Since the first dts of next input track is zero,
+                    // the dts will not be strictly increased without adding 1 here
+                    out_track->end_dts = out_track->prev_dts + 1;
+                    break;
                 }
                 if( sample )
                 {
                     sample->index = out_track->sample_entry;
                     sample->dts  *= out_track->timebase;
                     sample->cts  *= out_track->timebase;
+
+                    // sam.l: Add last dts from previous input track
+                    sample->cts += out_track->end_dts;
+                    sample->dts += out_track->end_dts;
+
                     if( opt->timeline_shift )
                     {
                         if( out_track->current_sample_number == 0 )
@@ -1164,16 +1183,8 @@ static int do_mux( muxer_t *muxer )
                     ++num_consecutive_sample_skip;      /* Skip appendig sample. */
             }
         }
-        if( ++ out_movie->current_track_number > out_movie->num_of_tracks )
-            out_movie->current_track_number = 1;    /* Back the first output track. */
-        /* Move the next track. */
-        if( ++ input->current_track_number > input->num_of_tracks )
-        {
-            /* Move the next input movie. */
-            input->current_track_number = 1;
-            if( ++ current_input_number > muxer->num_of_inputs )
-                current_input_number = 1;       /* Back the first input movie. */
-        }
+    }
+
     }
     for( out_movie->current_track_number = 1;
          out_movie->current_track_number <= out_movie->num_of_tracks;
